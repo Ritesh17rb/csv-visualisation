@@ -1,0 +1,27 @@
+[
+  {
+    "name": "pokemon",
+    "displayName": "Pokemon",
+    "path": "data/pokemon/vis-data.json"
+  },
+  {
+    "name": "moma",
+    "displayName": "MoMA Collection",
+    "path": "data/moma/vis-data.json"
+  },
+  {
+    "name": "met_museum",
+    "displayName": "Art Institute of Chicago",
+    "path": "data/met_museum/vis-data.json"
+  },
+  {
+    "name": "movies",
+    "displayName": "IMDb Top 1000 Movies",
+    "path": "data/movies/vis-data.json"
+  },
+  {
+    "name": "ecommerce",
+    "displayName": "E-commerce Products",
+    "path": "data/ecommerce/vis-data.json"
+  }
+]

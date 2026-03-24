@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSV Data Explorer</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>CSV Data <span class="accent">Explorer</span></h1>
+    <div class="subtitle" id="subtitle">
+      <span>Each dot is a row, positioned by similarity</span>
+      <span class="sep"></span>
+      <span class="stat" id="statCount"></span>
+      <span class="sep"></span>
+      <span class="stat" id="statMode"></span>
+    </div>
+  </div>
+  <div class="header-controls">
+    <select id="dataset-sel" title="Choose dataset"></select>
+    <div class="ctrl-sep"></div>
+    <button class="info-btn" id="archBtn" title="How it works">i</button>
+  </div>
+</header>
+
+<!-- Architecture modal backdrop -->
+<div class="arch-backdrop" id="archBackdrop"></div>
+
+<!-- Architecture modal -->
+<div class="arch-modal" id="archModal">
+  <div class="arch-head">
+    <span class="arch-title">How It <span class="accent">Works</span></span>
+    <button class="arch-close" id="archClose">&times;</button>
+  </div>
+  <div class="arch-scroll">
+    <div class="arch-cards" id="archCards"></div>
+  </div>
+</div>
+
+<div class="legend" id="legend"></div>
+
+<div class="plot-container" id="plotContainer">
+  <canvas id="plot"></canvas>
+  <svg class="brush-overlay" id="overlay"></svg>
+
+  <div class="axis-label x">UMAP 1</div>
+  <div class="axis-label y">UMAP 2</div>
+
+  <div id="loading">
+    <div class="loader">
+      <div class="loader-dots">
+        <span></span><span></span><span></span>
+      </div>
+      <div class="loader-text">Loading datasets</div>
+    </div>
+  </div>
+</div>
+
+
+<!-- Tooltip -->
+<div id="tip">
+  <img id="tipImg" class="tip-img" src="" alt="" style="display:none">
+  <div class="tip-title" id="tipTitle"></div>
+  <div class="tip-cluster" id="tipCluster"></div>
+  <div id="tipRows"></div>
+</div>
+
+<!-- Popup backdrop -->
+<div class="popup-backdrop" id="popupBackdrop"></div>
+
+<!-- Popup modal -->
+<div id="popup" class="hidden">
+  <div class="pop-head">
+    <span class="pop-title" id="pop-title">Selected rows</span>
+    <button class="pop-close" id="pop-close" type="button">&#10005;</button>
+  </div>
+  <div class="popup-toolbar">
+    <button class="view-btn active" data-view="grid">Grid</button>
+    <button class="view-btn" data-view="table">Table</button>
+    <div class="popup-badges" id="popupBadges"></div>
+  </div>
+  <div class="pop-scroll" id="popupScroll">
+    <table id="pop-table">
+      <thead><tr id="pop-thead"></tr></thead>
+      <tbody id="pop-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox">
+  <img id="lightboxImg" src="" alt="">
+  <div class="lightbox-label" id="lightboxLabel"></div>
+</div>
+
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
