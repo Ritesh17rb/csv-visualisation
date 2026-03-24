@@ -22,6 +22,8 @@
   <div class="header-controls">
     <select id="dataset-sel" title="Choose dataset"></select>
     <div class="ctrl-sep"></div>
+    <a href="catalog.html" class="nav-link" title="Browse datasets">Browse Data</a>
+    <div class="ctrl-sep"></div>
     <button class="info-btn" id="archBtn" title="How it works">i</button>
   </div>
 </header>
@@ -51,10 +53,21 @@
 
   <div id="loading">
     <div class="loader">
-      <div class="loader-dots">
-        <span></span><span></span><span></span>
+      <div class="loader-ring">
+        <svg viewBox="0 0 80 80">
+          <defs>
+            <linearGradient id="loader-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#3b82f6"/>
+              <stop offset="100%" stop-color="#8b5cf6"/>
+            </linearGradient>
+          </defs>
+          <circle class="loader-track" cx="40" cy="40" r="32"/>
+          <circle class="loader-arc" cx="40" cy="40" r="32"/>
+        </svg>
+        <div class="loader-orb"></div>
       </div>
       <div class="loader-text">Loading datasets</div>
+      <div class="loader-sub">Fetching visualization data&hellip;</div>
     </div>
   </div>
 </div>

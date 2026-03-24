@@ -157,6 +157,21 @@
         render();
       });
 
+      item.addEventListener("mouseenter", () => {
+        if (!highlightedVal) {
+          hoveredVal = key;
+          updateLegendStyles();
+          render();
+        }
+      });
+
+      item.addEventListener("mouseleave", () => {
+        if (hoveredVal) {
+          hoveredVal = null;
+          updateLegendStyles();
+          render();
+        }
+      });
 
       el.appendChild(item);
     });
@@ -164,11 +179,12 @@
   }
 
   function updateLegendStyles() {
+    const activeVal = highlightedVal || hoveredVal;
     document.querySelectorAll(".legend-item").forEach(item => {
       const val = item.dataset.val;
       item.classList.remove("highlighted", "dimmed");
-      if (highlightedVal) {
-        if (val === highlightedVal) {
+      if (activeVal) {
+        if (val === activeVal) {
           item.classList.add("highlighted");
         } else {
           item.classList.add("dimmed");
@@ -905,7 +921,7 @@
   // ── load a dataset ────────────────────────────────────────
 
   async function loadDataset(path) {
-    if (loadEl) { loadEl.classList.remove("error"); loadEl.querySelector(".loader-text").textContent = "Loading dataset"; loadEl.style.display = "flex"; }
+    if (loadEl) { loadEl.classList.remove("error"); loadEl.querySelector(".loader-text").textContent = "Loading dataset"; loadEl.querySelector(".loader-sub").textContent = "Fetching visualization data\u2026"; loadEl.style.display = "flex"; }
     pausePlay();
     st.brushed = null;
     st.filters = {};
