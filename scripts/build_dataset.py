@@ -32,15 +32,16 @@ from scripts.fetchers import fetch_dataset  # noqa: E402
 
 DATA_DIR = ROOT / "data"
 
-AVAILABLE_DATASETS = ["pokemon", "moma", "met_museum", "movies", "ecommerce"]
+AVAILABLE_DATASETS = ["pokemon", "moma", "met_museum", "movies", "ecommerce", "anime"]
 
-try:
-    from google import genai
-except ImportError:
-    genai = None
+import hashlib
+import time as _time
+import re as _re
+
+import requests as _requests
 
 
-# ── Gemini text embedding ──────────────────────────────────
+# ── Row to text ───────────────────────────────────────────
 
 def row_to_text(row: pd.Series, columns: list[str]) -> str:
     """Convert a DataFrame row to a descriptive text sentence for embedding."""
@@ -53,27 +54,40 @@ def row_to_text(row: pd.Series, columns: list[str]) -> str:
     return ". ".join(parts)
 
 
+# ── Gemini text embedding (direct API) ────────────────────
+
+GEMINI_EMBED_URL = "https://generativelanguage.googleapis.com/v1beta/models/{}:embedContent"
+
+
+def _gemini_embed_one(text: str, model: str, api_key: str, output_dim: int = 768) -> list[float]:
+    """Embed a single text via the Gemini REST API, reduced to output_dim."""
+    url = GEMINI_EMBED_URL.format(model) + f"?key={api_key}"
+    resp = _requests.post(
+        url,
+        headers={"Content-Type": "application/json"},
+        json={
+            "model": f"models/{model}",
+            "content": {"parts": [{"text": text}]},
+            "outputDimensionality": output_dim,
+        },
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json()["embedding"]["values"]
+
+
 def build_gemini_vectors(df: pd.DataFrame, cfg: dict) -> np.ndarray:
     """Embed each row as text via Gemini embedding API."""
-    if genai is None:
-        raise ImportError("google-genai is required for text-gemini mode. Install: pip install google-genai")
-
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         raise ValueError("GEMINI_API_KEY environment variable is required for text-gemini mode")
 
-    client = genai.Client(api_key=api_key)
-    model = cfg.get("gemini_embedding_model", "gemini-embedding-001")
-    output_dims = cfg.get("gemini_output_dims", 768)
+    model = cfg.get("gemini_embedding_model", "gemini-embedding-2-preview")
     emb_cols = [c for c in cfg["embedding_columns"] if c in df.columns]
 
     # Convert rows to text
     texts = [row_to_text(row, emb_cols) for _, row in df.iterrows()]
     print(f"  Converting {len(texts)} rows to text (sample: {texts[0][:120]}...)")
-
-    # Embed in batches — use 50 per call to stay within free-tier rate limits
-    BATCH_SIZE = 50
-    all_embeddings = []
 
     # Check for cached embeddings
     cache_path = Path(cfg.get("_out_dir", "")) / "embeddings_cache.json"
@@ -87,82 +101,63 @@ def build_gemini_vectors(df: pd.DataFrame, cfg: dict) -> np.ndarray:
         except Exception:
             cached = {}
 
-    import hashlib
     text_hashes = [hashlib.md5(t.encode()).hexdigest() for t in texts]
 
-    # Find which texts need embedding
-    to_embed_indices = [i for i, h in enumerate(text_hashes) if h not in cached]
-    to_embed_texts = [texts[i] for i in to_embed_indices]
+    # Find which unique texts need embedding. This avoids repeated API calls
+    # when many rows serialize to the same text (common in categorical datasets).
+    to_embed_items = []
+    seen_hashes = set()
+    for text_hash, text in zip(text_hashes, texts):
+        if text_hash in cached or text_hash in seen_hashes:
+            continue
+        seen_hashes.add(text_hash)
+        to_embed_items.append((text_hash, text))
 
-    if to_embed_texts:
-        print(f"  Embedding {len(to_embed_texts)} texts via Gemini ({model}, {output_dims}d)...", flush=True)
-        import time as _time
-        import re as _re
-        total_batches = (len(to_embed_texts) - 1) // BATCH_SIZE + 1
+    if to_embed_items:
+        print(f"  Embedding {len(to_embed_items)} unique texts via {model} (Gemini API)...", flush=True)
 
-        for batch_start in range(0, len(to_embed_texts), BATCH_SIZE):
-            batch = to_embed_texts[batch_start:batch_start + BATCH_SIZE]
-            batch_indices = to_embed_indices[batch_start:batch_start + BATCH_SIZE]
-            batch_num = batch_start // BATCH_SIZE + 1
-
+        for i, (text_hash, text) in enumerate(to_embed_items):
             for attempt in range(8):
                 try:
-                    result = client.models.embed_content(
-                        model=model,
-                        contents=batch,
-                        config={"output_dimensionality": output_dims},
-                    )
-                    for idx, emb in zip(batch_indices, result.embeddings):
-                        cached[text_hashes[idx]] = emb.values
-                    print(f"    Batch {batch_num}/{total_batches}: {len(batch)} texts embedded", flush=True)
-                    # Small delay between batches to avoid rate limits
-                    if batch_start + BATCH_SIZE < len(to_embed_texts):
-                        _time.sleep(2)
+                    emb = _gemini_embed_one(text, model, api_key)
+                    cached[text_hash] = emb
+                    if (i + 1) % 50 == 0 or i == 0:
+                        print(f"    {i + 1}/{len(to_embed_items)} embedded (dim={len(emb)})", flush=True)
                     break
                 except Exception as e:
                     err_str = str(e)
-                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                        # Extract retry delay from error if available
-                        m = _re.search(r"retry\s*(?:in|Delay['\"]:\s*['\"])\s*(\d+)", err_str, _re.IGNORECASE)
-                        wait = int(m.group(1)) + 2 if m else min(60, 2 ** attempt * 10)
-                        print(f"    Rate limited (attempt {attempt + 1}/8), waiting {wait}s...", flush=True)
+                    if any(k in err_str.lower() for k in ["429", "503", "rate", "resource_exhausted", "timeout", "timed out", "connection", "service unavailable"]):
+                        wait = min(60, 2 ** attempt * 5)
+                        print(f"    Retry (attempt {attempt + 1}/8): {err_str[:80]}... waiting {wait}s", flush=True)
                         _time.sleep(wait)
                     else:
                         raise
             else:
-                print(f"    WARNING: Skipping batch {batch_num} after 8 failed attempts — will use numerical fallback", flush=True)
-                break  # skip this batch, use numerical fallback for missing
+                print(f"    WARNING: Failed to embed text hash {text_hash} after 8 attempts", flush=True)
 
-            # Save cache after each batch (resumable)
-            if cache_path.parent.exists():
+            # Save cache every 50 unique texts (resumable)
+            if (i + 1) % 50 == 0 and cache_path.parent.exists():
                 cache_list = [{"text_hash": h, "embedding": v} for h, v in cached.items()]
                 with open(cache_path, "w", encoding="utf-8") as f:
                     json.dump(cache_list, f)
+
+        # Final cache save
+        if cache_path.parent.exists():
+            cache_list = [{"text_hash": h, "embedding": v} for h, v in cached.items()]
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(cache_list, f)
 
         print(f"  Cached {len(cached)} embeddings", flush=True)
     else:
         print(f"  All {len(texts)} embeddings found in cache")
 
-    # Assemble final matrix — if some embeddings are missing, use numerical fallback
-    missing = [i for i in range(len(texts)) if text_hashes[i] not in cached]
+    # Assemble final matrix
+    all_embeddings = [cached.get(text_hashes[i], None) for i in range(len(texts))]
+    missing = [i for i, e in enumerate(all_embeddings) if e is None]
     if missing:
-        print(f"  WARNING: {len(missing)} rows missing Gemini embeddings, using numerical fallback for them")
-        # Build numerical vectors for fallback, padded/truncated to match embedding dim
-        num_vecs = build_numerical_vectors(df, cfg)
-        # Pad or truncate numerical vectors to match output_dims
-        if num_vecs.shape[1] < output_dims:
-            num_vecs = np.hstack([num_vecs, np.zeros((len(num_vecs), output_dims - num_vecs.shape[1]))])
-        elif num_vecs.shape[1] > output_dims:
-            num_vecs = num_vecs[:, :output_dims]
-        all_embeddings = []
-        for i in range(len(texts)):
-            h = text_hashes[i]
-            if h in cached:
-                all_embeddings.append(cached[h])
-            else:
-                all_embeddings.append(num_vecs[i].tolist())
-    else:
-        all_embeddings = [cached[text_hashes[i]] for i in range(len(texts))]
+        print(f"  WARNING: {len(missing)} rows missing embeddings — cannot proceed")
+        raise RuntimeError(f"{len(missing)} embeddings missing, rebuild needed")
+
     return np.array(all_embeddings, dtype=np.float64)
 
 
@@ -200,6 +195,7 @@ def detect_column_type(series: pd.Series) -> str:
 
 def build_column_meta(df: pd.DataFrame, cfg: dict) -> dict:
     meta = {}
+    multi_value_cols = set(cfg.get("multi_value_columns", []))
     all_cols = set(
         cfg.get("embedding_columns", [])
         + cfg.get("color_columns", [])
@@ -215,7 +211,13 @@ def build_column_meta(df: pd.DataFrame, cfg: dict) -> dict:
             info["min"] = float(df[col].min())
             info["max"] = float(df[col].max())
         else:
-            vals = sorted(df[col].dropna().unique().tolist(), key=str)
+            if col in multi_value_cols:
+                vals = sorted(set(
+                    v.strip() for s in df[col].dropna().astype(str) for v in s.split(", ") if v.strip()
+                ), key=str)
+                info["multiValue"] = True
+            else:
+                vals = sorted(df[col].dropna().unique().tolist(), key=str)
             if len(vals) > 50:
                 vals = vals[:50]
             info["values"] = vals
@@ -314,7 +316,12 @@ def write_vis_data(
     color_maps = {}
     for col in color_cols:
         if col_meta.get(col, {}).get("type") == "categorical":
-            color_maps[col] = build_color_map(df[col].astype(str).tolist())
+            if col_meta[col].get("multiValue"):
+                # Explode comma-separated values for color mapping
+                all_vals = [v.strip() for s in df[col].astype(str) for v in s.split(", ") if v.strip()]
+                color_maps[col] = build_color_map(all_vals)
+            else:
+                color_maps[col] = build_color_map(df[col].astype(str).tolist())
 
     # Build points
     items = []

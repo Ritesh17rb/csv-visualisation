@@ -1,9 +1,9 @@
 CONFIG = {
     "name": "met_museum",
-    "display_name": "Art Institute of Chicago",
+    "display_name": "The Met Museum",
     "sample_size": 2000,
     "sample_seed": 42,
-    "embedding_columns": ["department", "culture", "classification", "artworkType", "style"],
+    "embedding_columns": ["department", "culture", "classification", "artworkType"],
     "color_columns": ["department", "artworkType", "classification"],
     "filter_columns": ["department", "artworkType"],
     "tooltip_columns": ["title", "artistDisplayName", "objectDate", "medium", "department", "culture", "artworkType"],

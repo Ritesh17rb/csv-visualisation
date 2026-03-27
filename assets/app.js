@@ -31,6 +31,8 @@
   const tip = document.getElementById("tip");
   const loadEl = document.getElementById("loading");
   const datasetSel = document.getElementById("dataset-sel");
+  const colorSel = document.getElementById("color-sel");
+  const filterControls = document.getElementById("filter-controls");
   const headerControls = document.querySelector(".header-controls");
   const popup = document.getElementById("popup");
   const popupBackdrop = document.getElementById("popupBackdrop");
@@ -96,11 +98,42 @@
     return `${label}: ${fmt(v)}`;
   }
 
+  function getColumnMeta(col) {
+    return (META.columns || {})[col] || {};
+  }
+
+  function splitMultiValue(val) {
+    return String(val)
+      .split(", ")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+
+  function getPointValues(d, col) {
+    const raw = d[col];
+    if (raw == null || raw === "") return [];
+    if (getColumnMeta(col).multiValue) return splitMultiValue(raw);
+    return [String(raw)];
+  }
+
+  function pointHasValue(d, col, val) {
+    if (!val) return true;
+    return getPointValues(d, col).includes(String(val));
+  }
+
+  function getColorKey(d, col) {
+    const values = getPointValues(d, col);
+    if (!values.length) return String(d[col] ?? "");
+    const activeVal = highlightedVal || hoveredVal;
+    if (activeVal && values.includes(activeVal)) return activeVal;
+    return values[0];
+  }
+
   function getColor(d) {
     const col = st.colorBy;
     if (!col) return "#3b82f6";
     const map = colorMaps[col];
-    if (map) return map[d[col]] || "#6b7280";
+    if (map) return map[getColorKey(d, col)] || "#6b7280";
     return "#3b82f6";
   }
 
@@ -115,7 +148,7 @@
   function isFiltered(d) {
     for (const col in st.filters) {
       const val = st.filters[col];
-      if (val && String(d[col]) !== val) return true;
+      if (val && !pointHasValue(d, col, val)) return true;
     }
     return false;
   }
@@ -134,8 +167,9 @@
     const counts = {};
     DATA.forEach(d => {
       if (!isFiltered(d)) {
-        const key = String(d[col]);
-        counts[key] = (counts[key] || 0) + 1;
+        Array.from(new Set(getPointValues(d, col))).forEach((key) => {
+          counts[key] = (counts[key] || 0) + 1;
+        });
       }
     });
 
@@ -276,7 +310,7 @@
         const activeVal = highlightedVal || hoveredVal;
         let alpha;
         if (activeVal) {
-          alpha = (String(d[col]) === activeVal) ? 1.0 : 0.12;
+          alpha = pointHasValue(d, col, activeVal) ? 1.0 : 0.12;
         } else if (!inRange && (!hasBrush || !inBrush)) {
           alpha = 0.05;
         } else if (!inRange) {
@@ -339,14 +373,77 @@
   // ── dynamic controls ──────────────────────────────────────
 
   function buildColorBySelect(colorCols, defaultCol) {
-    // Color-by dropdown removed from UI; default color is set automatically
+    if (!colorSel) return;
+    colorSel.innerHTML = "";
+    if (!colorCols.length) {
+      colorSel.disabled = true;
+      return;
+    }
+
+    colorSel.disabled = false;
+    colorCols.forEach((col) => {
+      const opt = document.createElement("option");
+      opt.value = col;
+      opt.textContent = col;
+      colorSel.appendChild(opt);
+    });
+
+    const next = colorCols.includes(st.colorBy) ? st.colorBy : (colorCols.includes(defaultCol) ? defaultCol : colorCols[0]);
+    st.colorBy = next;
+    colorSel.value = next;
   }
 
   function buildFilterSelects(filterCols, colMeta) {
-    // Filter dropdowns removed from UI
+    if (!filterControls) return;
+    filterControls.innerHTML = "";
+
+    filterCols.forEach((col) => {
+      const info = colMeta[col];
+      if (!info || info.type !== "categorical") return;
+
+      const sel = document.createElement("select");
+      sel.dataset.col = col;
+
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = col;
+      sel.appendChild(placeholder);
+
+      (info.values || []).forEach((val) => {
+        const opt = document.createElement("option");
+        opt.value = String(val);
+        opt.textContent = String(val);
+        sel.appendChild(opt);
+      });
+
+      sel.value = st.filters[col] || "";
+      sel.addEventListener("change", () => {
+        if (sel.value) st.filters[col] = sel.value;
+        else delete st.filters[col];
+        highlightedVal = null;
+        hoveredVal = null;
+        clearBrushedSelection();
+        buildLegend();
+        syncSliderUI();
+        resize();
+      });
+
+      filterControls.appendChild(sel);
+    });
   }
 
   // ── range slider ──────────────────────────────────────────
+
+  if (colorSel) {
+    colorSel.addEventListener("change", () => {
+      st.colorBy = colorSel.value;
+      highlightedVal = null;
+      hoveredVal = null;
+      buildLegend();
+      render();
+      if (popup.classList.contains("visible") && st.brushed) renderPopupContent(st.brushed);
+    });
+  }
 
   function syncSliderUI() {
     if (!R_DOM || !hasSlider) return;
@@ -495,7 +592,7 @@
     const [[x0, y0], [x1, y1]] = selection;
     return DATA.filter((d) => {
       if (isFiltered(d)) return false;
-      if (highlightedVal && String(d[st.colorBy]) !== highlightedVal) return false;
+      if (highlightedVal && !pointHasValue(d, st.colorBy, highlightedVal)) return false;
       const sx = getPointX(d);
       const sy = getPointY(d);
       return sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
@@ -537,8 +634,9 @@
     if (col && colorMaps[col]) {
       const selCounts = {};
       pts.forEach(d => {
-        const key = String(d[col]);
-        selCounts[key] = (selCounts[key] || 0) + 1;
+        Array.from(new Set(getPointValues(d, col))).forEach((key) => {
+          selCounts[key] = (selCounts[key] || 0) + 1;
+        });
       });
       badgesEl.innerHTML = Object.entries(selCounts)
         .sort((a, b) => b[1] - a[1])
@@ -857,8 +955,8 @@
     {
       icon: "\uD83E\uDDE0", color: "#f59e0b",
       title: "Gemini Text Embeddings",
-      desc: "Convert each row to a descriptive sentence and embed via Google Gemini embedding model into 768-dimensional vectors capturing semantic meaning.",
-      tags: [{ text: "gemini-embedding-001", bg: "#451a03", fg: "#fbbf24" }, { text: "768 dims", bg: "#451a03", fg: "#fbbf24" }],
+      desc: "Convert each row to a descriptive sentence and embed via Gemini Embedding 2 into 768-dimensional vectors capturing semantic meaning.",
+      tags: [{ text: "gemini-embedding-2-preview", bg: "#451a03", fg: "#fbbf24" }, { text: "768 dims", bg: "#451a03", fg: "#fbbf24" }],
     },
     {
       icon: "\uD83D\uDCCC", color: "#22c55e",
@@ -980,7 +1078,7 @@
     const datasets = await fetch("data/datasets.json").then((r) => {
       if (!r.ok) throw new Error(r.status);
       return r.json();
-    });
+    }).then((items) => items.filter((ds) => ds.name !== "moma"));
 
     datasetSel.innerHTML = "";
     datasets.forEach((ds) => {

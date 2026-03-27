@@ -108,69 +108,83 @@ def fetch_moma(data_dir: Path) -> pd.DataFrame:
     return df
 
 
-# ── Art Institute of Chicago (replaces Met Museum – better API) ──
+# ── The Metropolitan Museum of Art ────────────────────────────
 
-AIC_API_URL = "https://api.artic.edu/api/v1/artworks"
-AIC_IMAGE_URL = "https://www.artic.edu/iiif/2/{}/full/400,/0/default.jpg"
+MET_SEARCH_URL = "https://collectionapi.metmuseum.org/public/collection/v1/search"
+MET_OBJECT_URL = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{}"
+
+
+def _fetch_met_object(obj_id):
+    """Fetch a single Met object; returns dict or None."""
+    try:
+        r = requests.get(MET_OBJECT_URL.format(obj_id), timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
 
 
 def fetch_met_museum(data_dir: Path) -> pd.DataFrame:
-    """Fetches from Art Institute of Chicago API (more reliable than Met API)."""
+    """Fetches artworks from the Met Museum Open Access API."""
     cache = _cache_path(data_dir, "met_museum")
     if _is_cached(cache):
-        print("  Using cached Art Institute of Chicago data.")
+        print("  Using cached Met Museum data.")
         return pd.read_csv(cache)
 
-    print("  Fetching Art Institute of Chicago artworks...")
-    fields = "id,title,artist_display,date_display,medium_display,department_title,place_of_origin,artwork_type_title,style_title,classification_title,image_id"
+    print("  Searching Met Museum for public-domain artworks with images...")
+    r = requests.get(MET_SEARCH_URL, params={
+        "hasImages": "true",
+        "isPublicDomain": "true",
+        "q": "painting",
+    }, timeout=30)
+    r.raise_for_status()
+    all_ids = r.json().get("objectIDs", [])
+    print(f"    Found {len(all_ids)} object IDs, fetching details...")
+
+    # Shuffle and take a larger pool to ensure enough have images
+    import random
+    rng = random.Random(42)
+    rng.shuffle(all_ids)
+    pool = all_ids[:4000]
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     results = []
-    page = 1
-    max_pages = 30  # ~3000 artworks (100 per page)
-
-    while page <= max_pages:
-        try:
-            r = requests.get(AIC_API_URL, params={
-                "fields": fields,
-                "limit": 100,
-                "page": page,
-                "query[term][is_public_domain]": "true",
-            }, timeout=30)
-            r.raise_for_status()
-            data = r.json().get("data", [])
-            if not data:
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        futures = {ex.submit(_fetch_met_object, oid): oid for oid in pool}
+        for fut in as_completed(futures):
+            obj = fut.result()
+            if not obj:
+                continue
+            img = obj.get("primaryImageSmall", "")
+            if not img:
+                continue
+            results.append({
+                "title": obj.get("title", "Untitled"),
+                "artistDisplayName": obj.get("artistDisplayName", "") or "Unknown",
+                "objectDate": obj.get("objectDate", ""),
+                "medium": obj.get("medium", "") or "Unknown",
+                "department": obj.get("department", "") or "Other",
+                "culture": obj.get("culture", "") or "Unknown",
+                "classification": obj.get("classification", "") or "Other",
+                "artworkType": obj.get("objectName", "") or "Other",
+                "primaryImageSmall": img,
+            })
+            if len(results) % 200 == 0:
+                print(f"    {len(results)} artworks with images so far...")
+            if len(results) >= 2500:
                 break
-            for item in data:
-                img_id = item.get("image_id")
-                if not img_id:
-                    continue
-                results.append({
-                    "title": item.get("title", "Untitled"),
-                    "artistDisplayName": item.get("artist_display", "Unknown"),
-                    "objectDate": item.get("date_display", ""),
-                    "medium": item.get("medium_display", "Unknown"),
-                    "department": item.get("department_title", "Other"),
-                    "culture": item.get("place_of_origin", "") or "Unknown",
-                    "classification": item.get("classification_title", "") or "Other",
-                    "artworkType": item.get("artwork_type_title", "") or "Other",
-                    "style": item.get("style_title", "") or "Unknown",
-                    "primaryImageSmall": AIC_IMAGE_URL.format(img_id),
-                })
-            print(f"    Page {page}: {len(data)} items, {len(results)} with images total")
-            page += 1
-        except Exception as e:
-            print(f"    Page {page} failed: {e}")
-            break
 
+    print(f"    Collected {len(results)} artworks with images")
     df = pd.DataFrame(results)
 
-    for col in ["culture", "classification", "department", "artworkType", "style", "artistDisplayName"]:
+    for col in ["culture", "classification", "department", "artworkType", "artistDisplayName"]:
         if col in df.columns:
             df[col] = df[col].replace("", "Unknown").fillna("Unknown")
 
     cache.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(cache, index=False)
-    print(f"  Saved {len(df)} Art Institute of Chicago artworks.")
+    print(f"  Saved {len(df)} Met Museum artworks.")
     return df
 
 
@@ -268,6 +282,82 @@ def fetch_ecommerce(data_dir: Path) -> pd.DataFrame:
 
 
 
+# ── Anime (MyAnimeList via Jikan) ────────────────────────
+
+JIKAN_TOP_URL = "https://api.jikan.moe/v4/top/anime"
+
+
+def fetch_anime(data_dir: Path) -> pd.DataFrame:
+    cache = _cache_path(data_dir, "anime")
+    if _is_cached(cache):
+        print("  Using cached Anime data.")
+        return pd.read_csv(cache)
+
+    print("  Fetching top anime from Jikan API (MyAnimeList)...")
+    rows = []
+    page = 1
+    while len(rows) < 1500:
+        print(f"    Page {page} ({len(rows)} so far)...")
+        r = requests.get(JIKAN_TOP_URL, params={"page": page, "limit": 25}, timeout=30)
+        if r.status_code == 429:
+            time.sleep(2)
+            continue
+        r.raise_for_status()
+        data = r.json()
+        items = data.get("data", [])
+        if not items:
+            break
+        for a in items:
+            img = ""
+            images = a.get("images", {})
+            jpg = images.get("jpg", {})
+            img = jpg.get("large_image_url") or jpg.get("image_url", "")
+
+            genres = ", ".join(g["name"] for g in a.get("genres", []))
+            demographics = ", ".join(g["name"] for g in a.get("demographics", []))
+            studios = ", ".join(s["name"] for s in a.get("studios", []))
+            genre_primary = a["genres"][0]["name"] if a.get("genres") else "Unknown"
+
+            rows.append({
+                "title": a.get("title", ""),
+                "title_english": a.get("title_english") or a.get("title", ""),
+                "score": a.get("score") or 0,
+                "scored_by": a.get("scored_by") or 0,
+                "members": a.get("members") or 0,
+                "episodes": a.get("episodes") or 0,
+                "type": a.get("type") or "Unknown",
+                "source": a.get("source") or "Unknown",
+                "status": a.get("status") or "Unknown",
+                "rating": a.get("rating") or "Unknown",
+                "genres": genres or "Unknown",
+                "genre_primary": genre_primary,
+                "demographics": demographics or "Unknown",
+                "studios": studios or "Unknown",
+                "year": a.get("year") or 0,
+                "image_url": img,
+            })
+        page += 1
+        # Jikan rate limit: ~3 req/s
+        time.sleep(0.5)
+
+        if not data.get("pagination", {}).get("has_next_page", False):
+            break
+
+    print(f"    Collected {len(rows)} anime entries")
+    df = pd.DataFrame(rows)
+
+    # Clean up
+    df["score"] = pd.to_numeric(df["score"], errors="coerce").fillna(0)
+    df["episodes"] = pd.to_numeric(df["episodes"], errors="coerce").fillna(0).astype(int)
+    df["year"] = pd.to_numeric(df["year"], errors="coerce").fillna(0).astype(int)
+    df["rating"] = df["rating"].fillna("Unknown")
+
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(cache, index=False)
+    print(f"  Saved {len(df)} anime.")
+    return df
+
+
 # ── dispatcher ───────────────────────────────────────────────
 
 FETCHERS = {
@@ -276,6 +366,7 @@ FETCHERS = {
     "met_museum": fetch_met_museum,
     "movies": fetch_movies,
     "ecommerce": fetch_ecommerce,
+    "anime": fetch_anime,
 }
 
 

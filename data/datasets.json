@@ -11,7 +11,7 @@
   },
   {
     "name": "met_museum",
-    "displayName": "Art Institute of Chicago",
+    "displayName": "The Met Museum",
     "path": "data/met_museum/vis-data.json"
   },
   {
@@ -23,5 +23,10 @@
     "name": "ecommerce",
     "displayName": "E-commerce Products",
     "path": "data/ecommerce/vis-data.json"
+  },
+  {
+    "name": "anime",
+    "displayName": "Top Anime (MyAnimeList)",
+    "path": "data/anime/vis-data.json"
   }
 ]

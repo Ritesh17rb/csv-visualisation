@@ -48,6 +48,28 @@
 
   function isNum(v) { return typeof v === "number" && isFinite(v); }
 
+  function getColumnMeta(meta, col) {
+    return (meta && meta.columns && meta.columns[col]) || {};
+  }
+
+  function splitMultiValue(val) {
+    return String(val)
+      .split(", ")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+
+  function getColorKey(point, meta, col) {
+    if (!col) return "";
+    const raw = point[col];
+    if (raw == null || raw === "") return "";
+    if (getColumnMeta(meta, col).multiValue) {
+      const values = splitMultiValue(raw);
+      return values[0] || "";
+    }
+    return String(raw);
+  }
+
   function colorForVal(val, map) {
     if (map && map[val]) return map[val];
     return "#475569";
@@ -57,7 +79,7 @@
   try {
     const res = await fetch("data/datasets.json");
     if (!res.ok) throw new Error(res.status);
-    datasets = await res.json();
+    datasets = (await res.json()).filter((ds) => ds.name !== "moma");
   } catch (e) {
     pageLoader.querySelector(".loader-text").textContent = "Failed to load datasets";
     pageLoader.querySelector(".loader-sub").textContent = e.message;
@@ -97,7 +119,7 @@
         const cmap = meta ? (meta.colorMaps || {})[colorCol] || {} : {};
         const sample = points.slice(0, 60);
         previewHtml = `<div class="ds-preview-dots">${sample.map((p, j) => {
-          const c = colorForVal(p[colorCol], cmap);
+          const c = colorForVal(getColorKey(p, meta, colorCol), cmap);
           return `<div class="ds-preview-dot" style="background:${c};animation-delay:${j * 15}ms"></div>`;
         }).join("")}</div>`;
       }
@@ -308,13 +330,19 @@
       }
 
       // Label with colour dot
-      const color = colorForVal(p[colorCol], cmap);
+      const color = colorForVal(getColorKey(p, current.meta, colorCol), cmap);
       bodyHtml += `<td><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:7px;vertical-align:middle"></span>${fmt(p.label)}</td>`;
 
       visCols.forEach(col => {
         const val = p[col];
         if (isNum(val)) {
           bodyHtml += `<td class="cell-num">${fmt(val)}</td>`;
+        } else if (col === colorCol && getColumnMeta(current.meta, colorCol).multiValue) {
+          const badges = splitMultiValue(val || "").map((part) => {
+            const colorVal = colorForVal(part, cmap);
+            return `<span class="cell-badge" style="background:${colorVal}18;color:${colorVal};border:1px solid ${colorVal}33">${part}</span>`;
+          }).join(" ");
+          bodyHtml += `<td>${badges || fmt(val)}</td>`;
         } else if (col === colorCol && cmap[val]) {
           bodyHtml += `<td><span class="cell-badge" style="background:${cmap[val]}18;color:${cmap[val]};border:1px solid ${cmap[val]}33">${fmt(val)}</span></td>`;
         } else {
@@ -356,7 +384,7 @@
     let html = "";
 
     slice.forEach(p => {
-      const color = colorForVal(p[colorCol], cmap);
+      const color = colorForVal(getColorKey(p, current.meta, colorCol), cmap);
       let imgHtml = "";
       if (hasImg && p.image) {
         imgHtml = `<img class="data-card-img" src="${p.image}" alt="" loading="lazy" data-label="${(p.label || "").replace(/"/g, "&quot;")}">`;
