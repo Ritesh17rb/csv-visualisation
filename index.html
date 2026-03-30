@@ -15,18 +15,12 @@
       <span>Each dot is a row, positioned by similarity</span>
       <span class="sep"></span>
       <span class="stat" id="statCount"></span>
-      <span class="sep"></span>
-      <span class="stat" id="statMode"></span>
     </div>
   </div>
   <div class="header-controls">
-    <select id="dataset-sel" title="Choose dataset"></select>
-    <div class="ctrl-sep"></div>
     <select id="color-sel" title="Color by"></select>
     <div class="ctrl-sep"></div>
     <div id="filter-controls" style="display:inline-flex;gap:6px;align-items:center;"></div>
-    <div class="ctrl-sep"></div>
-    <a href="catalog.html" class="nav-link" title="Browse datasets">Browse Data</a>
     <div class="ctrl-sep"></div>
     <button class="info-btn" id="archBtn" title="How it works">i</button>
   </div>
@@ -70,12 +64,28 @@
         </svg>
         <div class="loader-orb"></div>
       </div>
-      <div class="loader-text">Loading datasets</div>
-      <div class="loader-sub">Fetching visualization data&hellip;</div>
+      <div class="loader-text">Waiting for generated dataset</div>
+      <div class="loader-sub">Run the build pipeline, then refresh this page.</div>
     </div>
   </div>
 </div>
 
+<!-- Timeline bar (shown only when dataset has timeline data) -->
+<div id="bottom" style="display:none">
+  <div class="date-row">
+    <span class="date-lbl" id="lbl-start"></span>
+    <div class="range-wrap" id="rwrap">
+      <div class="range-track"></div>
+      <div class="range-fill" id="rfill"></div>
+      <input type="range" id="sl-start">
+      <input type="range" id="sl-end">
+      <div id="range-dur"></div>
+    </div>
+    <span class="date-lbl right" id="lbl-end"></span>
+    <button id="play-btn">&#9654; Play</button>
+  </div>
+  <div id="year-ticks"></div>
+</div>
 
 <!-- Tooltip -->
 <div id="tip">

@@ -3,11 +3,7 @@
   const POINT_RADIUS = 5;
   const POINT_RADIUS_HOVER = 8;
   const HIT_RADIUS = 14;
-  const SEPARATION_RADIUS = 10;
-  const SEPARATION_TICKS = 110;
-  const SEPARATION_MAX_OFFSET = 28;
   const PADDING = { top: 24, right: 24, bottom: 34, left: 34 };
-
   const DOMAIN_PAD = 0.08;
 
   const PALETTE = [
@@ -30,7 +26,6 @@
   const brushSvg = d3.select("#overlay");
   const tip = document.getElementById("tip");
   const loadEl = document.getElementById("loading");
-  const datasetSel = document.getElementById("dataset-sel");
   const colorSel = document.getElementById("color-sel");
   const filterControls = document.getElementById("filter-controls");
   const headerControls = document.querySelector(".header-controls");
@@ -42,7 +37,6 @@
   const lightboxImg = document.getElementById("lightboxImg");
   const lightboxLabel = document.getElementById("lightboxLabel");
 
-
   // --- State ---
   let DATA = [];
   let META = {};
@@ -53,14 +47,13 @@
   let playRaf = null, playPrev = null;
   let brushG;
   let hoveredIdx = null;
-  let highlightedVal = null;  // clicked legend value
-  let hoveredVal = null;      // hovered legend value
+  let highlightedVal = null;
+  let hoveredVal = null;
   let popupView = "grid";
   let popupSortBy = "label";
   let popupSortAsc = true;
   let popupPosition = null;
   let popupDrag = null;
-
   let lightboxList = [];
   let lightboxIdx = -1;
 
@@ -73,6 +66,7 @@
     playing: false,
   };
 
+  // Timeline elements
   const slS = document.getElementById("sl-start");
   const slE = document.getElementById("sl-end");
   const rfill = document.getElementById("rfill");
@@ -80,7 +74,9 @@
   const lblE = document.getElementById("lbl-end");
   const durEl = document.getElementById("range-dur");
   const playBtn = document.getElementById("play-btn");
-  const hasSlider = !!(slS && slE && rfill && playBtn);
+  const bottomBar = document.getElementById("bottom");
+  let hasSlider = false;
+
   const selectedStatus = document.createElement("span");
   selectedStatus.className = "selected-status";
   selectedStatus.textContent = "Selected: 0";
@@ -94,7 +90,7 @@
   }
 
   function rangeLabel(v) {
-    const label = (META.rangeColumn && META.rangeColumn !== "_index") ? META.rangeColumn : "Row";
+    const label = META.timelineColumn || "Row";
     return `${label}: ${fmt(v)}`;
   }
 
@@ -102,17 +98,21 @@
     return (META.columns || {})[col] || {};
   }
 
-  function splitMultiValue(val) {
-    return String(val)
-      .split(", ")
-      .map((part) => part.trim())
-      .filter(Boolean);
+  function getColumnLabel(col) {
+    if (col === "cluster") return "Cluster Groups";
+    return String(col || "").replace(/_/g, " ");
+  }
+
+  function formatValueLabel(col, value) {
+    if (value == null || value === "") return "Missing";
+    if (col === "cluster") return `Cluster ${value}`;
+    return String(value);
   }
 
   function getPointValues(d, col) {
     const raw = d[col];
     if (raw == null || raw === "") return [];
-    if (getColumnMeta(col).multiValue) return splitMultiValue(raw);
+    if (Array.isArray(raw)) return raw.filter(v => v != null && v !== "").map(v => String(v));
     return [String(raw)];
   }
 
@@ -137,13 +137,8 @@
     return "#3b82f6";
   }
 
-  function getPointX(d) {
-    return Number.isFinite(d._sx) ? d._sx : xs(d.x);
-  }
-
-  function getPointY(d) {
-    return Number.isFinite(d._sy) ? d._sy : ys(d.y);
-  }
+  function getPointX(d) { return Number.isFinite(d._sx) ? d._sx : xs(d.x); }
+  function getPointY(d) { return Number.isFinite(d._sy) ? d._sy : ys(d.y); }
 
   function isFiltered(d) {
     for (const col in st.filters) {
@@ -163,7 +158,6 @@
     const map = colorMaps[col];
     if (!map) return;
 
-    // Count items per value
     const counts = {};
     DATA.forEach(d => {
       if (!isFiltered(d)) {
@@ -178,37 +172,29 @@
       const item = document.createElement("div");
       item.className = "legend-item";
       item.dataset.val = key;
-      item.innerHTML = `<span class="legend-dot" style="background:${map[key]}"></span>${key}<span class="legend-count">(${count})</span>`;
+      item.innerHTML = `<span class="legend-dot" style="background:${map[key]}"></span>${formatValueLabel(col, key)}<span class="legend-count">(${count})</span>`;
 
       item.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (highlightedVal === key) {
-          highlightedVal = null;
-        } else {
-          highlightedVal = key;
-        }
+        highlightedVal = highlightedVal === key ? null : key;
         updateLegendStyles();
         render();
       });
-
       item.addEventListener("mouseenter", () => {
-        if (!highlightedVal) {
-          hoveredVal = key;
-          updateLegendStyles();
-          render();
-        }
+        if (!highlightedVal) { hoveredVal = key; updateLegendStyles(); render(); }
       });
-
       item.addEventListener("mouseleave", () => {
-        if (hoveredVal) {
-          hoveredVal = null;
-          updateLegendStyles();
-          render();
-        }
+        if (hoveredVal) { hoveredVal = null; updateLegendStyles(); render(); }
       });
-
       el.appendChild(item);
     });
+
+    if (col === "cluster") {
+      const note = document.createElement("div");
+      note.className = "legend-note";
+      note.textContent = "Cluster labels are automatic KMeans group IDs, not rankings.";
+      el.appendChild(note);
+    }
     updateLegendStyles();
   }
 
@@ -218,11 +204,7 @@
       const val = item.dataset.val;
       item.classList.remove("highlighted", "dimmed");
       if (activeVal) {
-        if (val === activeVal) {
-          item.classList.add("highlighted");
-        } else {
-          item.classList.add("dimmed");
-        }
+        item.classList.add(val === activeVal ? "highlighted" : "dimmed");
       }
     });
   }
@@ -231,63 +213,14 @@
 
   function buildQT() {
     qt = d3.quadtree()
-      .x((d) => getPointX(d))
-      .y((d) => getPointY(d))
-      .addAll(DATA.filter((d) => !isFiltered(d)));
+      .x(d => getPointX(d))
+      .y(d => getPointY(d))
+      .addAll(DATA.filter(d => !isFiltered(d)));
   }
 
   function updatePointLayout() {
     if (!xs || !ys) return;
-
-    const minX = PADDING.left + POINT_RADIUS;
-    const maxX = W - PADDING.right - POINT_RADIUS;
-    const minY = PADDING.top + POINT_RADIUS;
-    const maxY = H - PADDING.bottom - POINT_RADIUS;
-
-    DATA.forEach((d) => {
-      d._sx = xs(d.x);
-      d._sy = ys(d.y);
-    });
-
-    const visible = DATA.filter((d) => !isFiltered(d));
-    if (visible.length < 2) return;
-
-    const nodes = visible.map((d) => ({
-      d,
-      x: d._sx,
-      y: d._sy,
-      anchorX: d._sx,
-      anchorY: d._sy,
-    }));
-
-    const sim = d3.forceSimulation(nodes)
-      .stop()
-      .alpha(1)
-      .velocityDecay(0.3)
-      .force("x", d3.forceX((n) => n.anchorX).strength(0.08))
-      .force("y", d3.forceY((n) => n.anchorY).strength(0.08))
-      .force("collide", d3.forceCollide(SEPARATION_RADIUS).iterations(2));
-
-    for (let i = 0; i < SEPARATION_TICKS; i++) {
-      sim.tick();
-      nodes.forEach((n) => {
-        const dx = n.x - n.anchorX;
-        const dy = n.y - n.anchorY;
-        const dist = Math.hypot(dx, dy);
-        if (dist > SEPARATION_MAX_OFFSET) {
-          const scale = SEPARATION_MAX_OFFSET / dist;
-          n.x = n.anchorX + dx * scale;
-          n.y = n.anchorY + dy * scale;
-        }
-        n.x = Math.min(maxX, Math.max(minX, n.x));
-        n.y = Math.min(maxY, Math.max(minY, n.y));
-      });
-    }
-
-    nodes.forEach((n) => {
-      n.d._sx = n.x;
-      n.d._sy = n.y;
-    });
+    DATA.forEach(d => { d._sx = xs(d.x); d._sy = ys(d.y); });
   }
 
   // ── render ────────────────────────────────────────────────
@@ -297,7 +230,7 @@
     ctx.clearRect(0, 0, W, H);
 
     const hasBrush = st.brushed !== null;
-    const brushedSet = hasBrush ? new Set(st.brushed.map((d) => d._i)) : null;
+    const brushedSet = hasBrush ? new Set(st.brushed.map(d => d._i)) : null;
     const col = st.colorBy;
 
     for (let pass = 0; pass < 2; pass++) {
@@ -342,7 +275,6 @@
       }
     }
     ctx.globalAlpha = 1;
-
   }
 
   // ── layout ────────────────────────────────────────────────
@@ -375,19 +307,13 @@
   function buildColorBySelect(colorCols, defaultCol) {
     if (!colorSel) return;
     colorSel.innerHTML = "";
-    if (!colorCols.length) {
-      colorSel.disabled = true;
-      return;
-    }
-
+    if (!colorCols.length) { colorSel.disabled = true; return; }
     colorSel.disabled = false;
-    colorCols.forEach((col) => {
+    colorCols.forEach(col => {
       const opt = document.createElement("option");
-      opt.value = col;
-      opt.textContent = col;
+      opt.value = col; opt.textContent = getColumnLabel(col);
       colorSel.appendChild(opt);
     });
-
     const next = colorCols.includes(st.colorBy) ? st.colorBy : (colorCols.includes(defaultCol) ? defaultCol : colorCols[0]);
     st.colorBy = next;
     colorSel.value = next;
@@ -396,54 +322,46 @@
   function buildFilterSelects(filterCols, colMeta) {
     if (!filterControls) return;
     filterControls.innerHTML = "";
-
-    filterCols.forEach((col) => {
+    filterCols.forEach(col => {
       const info = colMeta[col];
       if (!info || info.type !== "categorical") return;
-
       const sel = document.createElement("select");
       sel.dataset.col = col;
-
       const placeholder = document.createElement("option");
-      placeholder.value = "";
-      placeholder.textContent = col;
+      placeholder.value = ""; placeholder.textContent = getColumnLabel(col);
       sel.appendChild(placeholder);
-
-      (info.values || []).forEach((val) => {
+      (info.values || []).forEach(val => {
         const opt = document.createElement("option");
-        opt.value = String(val);
-        opt.textContent = String(val);
+        opt.value = String(val); opt.textContent = formatValueLabel(col, val);
         sel.appendChild(opt);
       });
-
       sel.value = st.filters[col] || "";
       sel.addEventListener("change", () => {
         if (sel.value) st.filters[col] = sel.value;
         else delete st.filters[col];
-        highlightedVal = null;
-        hoveredVal = null;
+        highlightedVal = null; hoveredVal = null;
         clearBrushedSelection();
         buildLegend();
         syncSliderUI();
         resize();
       });
-
       filterControls.appendChild(sel);
     });
   }
 
-  // ── range slider ──────────────────────────────────────────
+  // ── color-by change ───────────────────────────────────────
 
   if (colorSel) {
     colorSel.addEventListener("change", () => {
       st.colorBy = colorSel.value;
-      highlightedVal = null;
-      hoveredVal = null;
+      highlightedVal = null; hoveredVal = null;
       buildLegend();
       render();
       if (popup.classList.contains("visible") && st.brushed) renderPopupContent(st.brushed);
     });
   }
+
+  // ── timeline slider ───────────────────────────────────────
 
   function syncSliderUI() {
     if (!R_DOM || !hasSlider) return;
@@ -457,20 +375,22 @@
     rfill.style.width = `${width}%`;
     lblS.textContent = rangeLabel(Math.round(st.rMin));
     lblE.textContent = rangeLabel(Math.round(st.rMax));
-    const count = DATA.filter((d) => !isFiltered(d) && d.rangeVal >= st.rMin && d.rangeVal <= st.rMax).length;
+    const count = DATA.filter(d => !isFiltered(d) && d.rangeVal >= st.rMin && d.rangeVal <= st.rMax).length;
     durEl.textContent = `${count.toLocaleString()} rows`;
     durEl.style.left = `${left + width / 2}%`;
   }
 
   function buildTicks() {
     if (!R_DOM || !hasSlider) return;
+    const ticksEl = document.getElementById("year-ticks");
+    if (!ticksEl) return;
     const n = 8;
     const ticks = [];
     for (let i = 0; i < n; i++) {
       const v = R_DOM[0] + (i / (n - 1)) * (R_DOM[1] - R_DOM[0]);
       ticks.push(`<span>${fmt(Math.round(v))}</span>`);
     }
-    document.getElementById("year-ticks").innerHTML = ticks.join("");
+    ticksEl.innerHTML = ticks.join("");
   }
 
   function updateSelectedStatus(count) {
@@ -507,24 +427,22 @@
     applyPopupPosition(popupPosition);
   }
 
-  if (hasSlider) {
+  // Slider event listeners
+  if (slS && slE && rfill) {
     slS.addEventListener("input", () => {
-      if (!R_DOM) return;
+      if (!R_DOM || !hasSlider) return;
       st.rMin = Math.min(Number(slS.value), st.rMax - (R_DOM[1] - R_DOM[0]) / 500);
-      syncSliderUI();
-      render();
+      syncSliderUI(); render();
       if (popup.classList.contains("visible") && st.brushed) renderPopupContent(st.brushed);
     });
     slE.addEventListener("input", () => {
-      if (!R_DOM) return;
+      if (!R_DOM || !hasSlider) return;
       st.rMax = Math.max(Number(slE.value), st.rMin + (R_DOM[1] - R_DOM[0]) / 500);
-      syncSliderUI();
-      render();
+      syncSliderUI(); render();
       if (popup.classList.contains("visible") && st.brushed) renderPopupContent(st.brushed);
     });
-
     rfill.addEventListener("mousedown", (e) => {
-      if (st.playing || !R_DOM) return;
+      if (st.playing || !R_DOM || !hasSlider) return;
       e.preventDefault();
       const trackRect = document.getElementById("rwrap").getBoundingClientRect();
       const dragX = e.clientX, dragMin = st.rMin, dragMax = st.rMax;
@@ -561,11 +479,13 @@
     playBtn.textContent = "Pause"; playBtn.classList.add("playing");
     playRaf = requestAnimationFrame(playStep);
   }
+
   function pausePlay() {
     st.playing = false;
     if (playRaf) cancelAnimationFrame(playRaf);
     if (playBtn) { playBtn.textContent = "\u25B6 Play"; playBtn.classList.remove("playing"); }
   }
+
   function playStep(ts) {
     if (!st.playing || !R_DOM) return;
     if (!playPrev) playPrev = ts;
@@ -578,9 +498,8 @@
     if (st.rMax >= R_DOM[1]) { pausePlay(); return; }
     playRaf = requestAnimationFrame(playStep);
   }
-  if (playBtn) playBtn.addEventListener("click", () => { st.playing ? pausePlay() : startPlay(); });
 
-  // ── color-by (uses default from dataset metadata) ─────────
+  if (playBtn) playBtn.addEventListener("click", () => { st.playing ? pausePlay() : startPlay(); });
 
   // ── brush + popup ─────────────────────────────────────────
 
@@ -590,11 +509,10 @@
   function getBrushedPoints(selection) {
     if (!selection) return [];
     const [[x0, y0], [x1, y1]] = selection;
-    return DATA.filter((d) => {
+    return DATA.filter(d => {
       if (isFiltered(d)) return false;
       if (highlightedVal && !pointHasValue(d, st.colorBy, highlightedVal)) return false;
-      const sx = getPointX(d);
-      const sy = getPointY(d);
+      const sx = getPointX(d), sy = getPointY(d);
       return sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1;
     });
   }
@@ -607,11 +525,7 @@
   }
 
   function onBrushChanged(event) {
-    if (!event.selection) {
-      clearBrushedSelection();
-      return;
-    }
-
+    if (!event.selection) { clearBrushedSelection(); return; }
     const pts = getBrushedPoints(event.selection);
     st.brushed = pts;
     updateSelectedStatus(pts.length);
@@ -620,45 +534,36 @@
   }
 
   function showPopup(pts) {
-    if (!pts || !pts.length) {
-      closePopup(); return;
-    }
+    if (!pts || !pts.length) { closePopup(); return; }
     popupTitle.textContent = `${pts.length} row${pts.length === 1 ? "" : "s"} selected`;
     popup.classList.add("visible");
     popup.classList.remove("hidden");
     tip.style.display = "none";
 
-    // Build badges from color-by column
     const col = st.colorBy;
     const badgesEl = document.getElementById("popupBadges");
     if (col && colorMaps[col]) {
       const selCounts = {};
       pts.forEach(d => {
-        Array.from(new Set(getPointValues(d, col))).forEach((key) => {
+        Array.from(new Set(getPointValues(d, col))).forEach(key => {
           selCounts[key] = (selCounts[key] || 0) + 1;
         });
       });
       badgesEl.innerHTML = Object.entries(selCounts)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
+        .sort((a, b) => b[1] - a[1]).slice(0, 10)
         .map(([val, count]) => {
           const c = colorMaps[col][val] || "#6b7280";
           return `<span class="popup-badge" style="background:${c}18; border-color:${c}33">
             <span class="popup-badge-dot" style="background:${c}"></span>
-            ${val}
-            <span class="popup-badge-count" style="color:${c}">${count}</span>
+            ${val} <span class="popup-badge-count" style="color:${c}">${count}</span>
           </span>`;
         }).join("");
     } else {
       badgesEl.innerHTML = "";
     }
 
-    try {
-      renderPopupContent(pts);
-    } catch (err) {
-      popupScroll.innerHTML = `<div style="padding:16px;color:#cbd5e1">Selection opened, but the detail view failed to render.</div>`;
-      console.error(err);
-    }
+    try { renderPopupContent(pts); }
+    catch (err) { popupScroll.innerHTML = `<div style="padding:16px;color:#cbd5e1">Failed to render details.</div>`; }
     requestAnimationFrame(positionPopup);
   }
 
@@ -670,19 +575,13 @@
       if (typeof va === "number" && typeof vb === "number") return popupSortAsc ? va - vb : vb - va;
       return popupSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
     });
-
-    if (popupView === "grid") {
-      renderGridView(sorted);
-    } else {
-      renderTableView(sorted);
-    }
+    if (popupView === "grid") renderGridView(sorted);
+    else renderTableView(sorted);
   }
 
   function renderGridView(sorted) {
     const tipCols = META.tooltipColumns || [];
     const hasImg = META.hasImages;
-    const col = st.colorBy;
-
     popupScroll.innerHTML = "";
     const grid = document.createElement("div");
     grid.className = "popup-grid";
@@ -690,32 +589,15 @@
     sorted.forEach(d => {
       const item = document.createElement("div");
       item.className = "popup-grid-item";
-
-      let imgHtml = "";
-      if (hasImg && d.image) {
-        imgHtml = `<img src="${d.image}" alt="${d.label}" loading="lazy">`;
-      }
-
+      let imgHtml = hasImg && d.image ? `<img src="${d.image}" alt="${d.label}" loading="lazy">` : "";
       const color = getColor(d);
       const details = tipCols.slice(0, 3).map(c => {
-        const val = d[c];
-        return val != null ? `${c}: ${fmt(val)}` : "";
+        const val = d[c]; return val != null ? `${c}: ${fmt(val)}` : "";
       }).filter(Boolean).join(" · ");
-
-      item.innerHTML = `
-        ${imgHtml}
-        <div class="popup-grid-label">
-          <div class="popup-grid-pub" style="color:${color}">${d.label}</div>
-          <div style="font-size:11px;color:#94a3b8;margin-top:2px">${details}</div>
-        </div>
-      `;
-
-      if (hasImg && d.image) {
-        item.addEventListener("click", () => openLightbox(d, sorted));
-      }
+      item.innerHTML = `${imgHtml}<div class="popup-grid-label"><div class="popup-grid-pub" style="color:${color}">${d.label}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${details}</div></div>`;
+      if (hasImg && d.image) item.addEventListener("click", () => openLightbox(d, sorted));
       grid.appendChild(item);
     });
-
     popupScroll.appendChild(grid);
   }
 
@@ -724,42 +606,34 @@
     const hasImg = META.hasImages;
     const allCols = hasImg ? ["image", "label", "cluster", ...tipCols] : ["label", "cluster", ...tipCols];
 
-    const sortArrow = (col) => {
-      if (popupSortBy !== col) return "";
-      return `<span class="sort-arrow">${popupSortAsc ? "\u25B2" : "\u25BC"}</span>`;
-    };
+    const sortArrow = col => popupSortBy !== col ? "" : `<span class="sort-arrow">${popupSortAsc ? "\u25B2" : "\u25BC"}</span>`;
 
     let html = `<table id="pop-table"><thead><tr>`;
     allCols.forEach(col => {
-      const dispName = col === "image" ? "" : col === "label" ? "Label" : col === "cluster" ? "Cluster" : col;
+      const name = col === "image" ? "" : col === "label" ? "Label" : col === "cluster" ? "Cluster Group" : getColumnLabel(col);
       const cls = col === popupSortBy ? "sorted" : "";
       const w = col === "image" ? ' style="width:60px"' : "";
-      html += `<th data-sort="${col}" class="${cls}"${w}>${dispName} ${sortArrow(col)}</th>`;
+      html += `<th data-sort="${col}" class="${cls}"${w}>${name} ${sortArrow(col)}</th>`;
     });
     html += `</tr></thead><tbody>`;
 
     sorted.forEach(d => {
       const inRange = d.rangeVal >= st.rMin && d.rangeVal <= st.rMax;
       const cells = allCols.map(col => {
-        if (col === "image") {
-          const src = d.image || "";
-          return src ? `<td><img class="pop-thumb" src="${src}" alt="" loading="lazy"></td>` : `<td></td>`;
-        }
+        if (col === "image") return d.image ? `<td><img class="pop-thumb" src="${d.image}" alt="" loading="lazy"></td>` : `<td></td>`;
         if (col === "cluster") {
           const cc = CLUSTER_PAL[d.cluster % CLUSTER_PAL.length];
-          return `<td><span class="clust-sq" style="background:${cc}"></span> ${d.cluster}</td>`;
+          return `<td><span class="clust-sq" style="background:${cc}"></span> ${formatValueLabel("cluster", d.cluster)}</td>`;
         }
         const val = d[col];
         return `<td>${val != null ? fmt(val) : ""}</td>`;
       }).join("");
       html += `<tr style="opacity:${inRange ? 1 : .45}">${cells}</tr>`;
     });
-
     html += `</tbody></table>`;
     popupScroll.innerHTML = html;
 
-    // Sortable headers
-    popupScroll.querySelector("thead").addEventListener("click", (e) => {
+    popupScroll.querySelector("thead").addEventListener("click", e => {
       const th = e.target.closest("th[data-sort]");
       if (!th || th.dataset.sort === "image") return;
       const col = th.dataset.sort;
@@ -768,7 +642,6 @@
       renderPopupContent(st.brushed);
     });
 
-    // Row click opens lightbox if images exist
     if (hasImg) {
       popupScroll.querySelectorAll("tbody tr").forEach((tr, i) => {
         tr.addEventListener("click", () => openLightbox(sorted[i], sorted));
@@ -793,25 +666,21 @@
   document.getElementById("pop-close").addEventListener("click", dismissAll);
   popupBackdrop.addEventListener("click", dismissAll);
 
-  document.querySelector(".pop-head").addEventListener("mousedown", (e) => {
+  // Popup dragging
+  document.querySelector(".pop-head").addEventListener("mousedown", e => {
     if (e.target.closest("button")) return;
     e.preventDefault();
     if (!popup.classList.contains("visible")) return;
     const rect = popup.getBoundingClientRect();
     popupPosition = { left: rect.left, top: rect.top };
-    popupDrag = {
-      dx: e.clientX - rect.left,
-      dy: e.clientY - rect.top,
-    };
+    popupDrag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
     popup.classList.add("dragging");
   });
-
-  document.addEventListener("mousemove", (e) => {
+  document.addEventListener("mousemove", e => {
     if (!popupDrag) return;
     popupPosition = clampPopupPosition(e.clientX - popupDrag.dx, e.clientY - popupDrag.dy);
     applyPopupPosition(popupPosition);
   });
-
   document.addEventListener("mouseup", () => {
     if (!popupDrag) return;
     popupDrag = null;
@@ -855,140 +724,89 @@
 
   // ── tooltip ───────────────────────────────────────────────
 
-  document.getElementById("overlay").addEventListener("mousemove", (e) => {
+  document.getElementById("overlay").addEventListener("mousemove", e => {
     if (!qt || st.playing) { tip.style.display = "none"; return; }
     if (e.buttons > 0) { tip.style.display = "none"; return; }
     const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
     const found = qt.find(mx, my, HIT_RADIUS);
 
     if (!found) {
-      if (hoveredIdx !== null) {
-        hoveredIdx = null;
-        render();
-      }
-      tip.style.display = "none";
-      return;
+      if (hoveredIdx !== null) { hoveredIdx = null; render(); }
+      tip.style.display = "none"; return;
     }
 
-    const idx = found._i;
-    if (idx !== hoveredIdx) {
-      hoveredIdx = idx;
-      render();
-    }
+    if (found._i !== hoveredIdx) { hoveredIdx = found._i; render(); }
 
     const tipCols = META.tooltipColumns || [];
-    const rows = tipCols.map((col) => {
+    const rows = tipCols.map(col => {
       const val = found[col];
       return `<div class="tip-row"><b>${col}:</b> ${val != null ? fmt(val) : "\u2014"}</div>`;
     }).join("");
 
     const tipImgEl = document.getElementById("tipImg");
-    if (META.hasImages && found.image) {
-      tipImgEl.src = found.image;
-      tipImgEl.style.display = "block";
-    } else {
-      tipImgEl.style.display = "none";
-    }
+    if (META.hasImages && found.image) { tipImgEl.src = found.image; tipImgEl.style.display = "block"; }
+    else tipImgEl.style.display = "none";
 
     document.getElementById("tipTitle").textContent = found.label;
-    document.getElementById("tipCluster").textContent = `Cluster ${found.cluster}`;
+    document.getElementById("tipCluster").textContent = `Cluster group: ${found.cluster}`;
     document.getElementById("tipRows").innerHTML = rows;
 
     tip.style.display = "block";
-    let tx = e.clientX + 16;
-    let ty = e.clientY - 10;
+    let tx = e.clientX + 16, ty = e.clientY - 10;
     if (tx + 320 > window.innerWidth) tx = e.clientX - 320 - 16;
     if (ty < 0) ty = 10;
-    tip.style.left = `${tx}px`;
-    tip.style.top = `${ty}px`;
+    tip.style.left = `${tx}px`; tip.style.top = `${ty}px`;
   });
 
   document.getElementById("overlay").addEventListener("mouseleave", () => {
-    hoveredIdx = null;
-    tip.style.display = "none";
-    render();
+    hoveredIdx = null; tip.style.display = "none"; render();
   });
 
   // ── keyboard ──────────────────────────────────────────────
 
-  document.addEventListener("keydown", (e) => {
+  document.addEventListener("keydown", e => {
     if (e.key === "Escape") {
       const archModal = document.getElementById("archModal");
-      if (archModal.classList.contains("visible")) {
-        closeArchModal();
-      } else if (lightbox.classList.contains("visible")) {
-        lightbox.classList.remove("visible");
-        lightboxImg.src = "";
-      } else if (popup.classList.contains("visible")) {
-        dismissAll();
-      } else if (highlightedVal) {
-        highlightedVal = null;
-        updateLegendStyles();
-        render();
-      }
+      if (archModal.classList.contains("visible")) closeArchModal();
+      else if (lightbox.classList.contains("visible")) { lightbox.classList.remove("visible"); lightboxImg.src = ""; }
+      else if (popup.classList.contains("visible")) dismissAll();
+      else if (highlightedVal) { highlightedVal = null; updateLegendStyles(); render(); }
     }
-
     if (lightbox.classList.contains("visible")) {
-      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-        e.preventDefault();
-        lightboxIdx = (lightboxIdx - 1 + lightboxList.length) % lightboxList.length;
-        showLightboxImage();
-      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-        e.preventDefault();
-        lightboxIdx = (lightboxIdx + 1) % lightboxList.length;
-        showLightboxImage();
-      }
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); lightboxIdx = (lightboxIdx - 1 + lightboxList.length) % lightboxList.length; showLightboxImage(); }
+      else if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); lightboxIdx = (lightboxIdx + 1) % lightboxList.length; showLightboxImage(); }
     }
   });
 
   // ── architecture modal ────────────────────────────────────
 
   const ARCH_STEPS = [
-    {
-      icon: "\uD83D\uDCC4", color: "#3b82f6",
-      title: "Load CSV Data",
-      desc: "Fetch a real-world CSV dataset (Pokemon, Movies, Art, E-commerce) with rich categorical and numerical columns.",
-      tags: [{ text: "pandas", bg: "#1e3a5f", fg: "#60a5fa" }, { text: "CSV", bg: "#1e3a5f", fg: "#60a5fa" }],
-    },
-    {
-      icon: "\uD83E\uDDE0", color: "#f59e0b",
-      title: "Gemini Text Embeddings",
-      desc: "Convert each row to a descriptive sentence and embed via Gemini Embedding 2 into 768-dimensional vectors capturing semantic meaning.",
-      tags: [{ text: "gemini-embedding-2-preview", bg: "#451a03", fg: "#fbbf24" }, { text: "768 dims", bg: "#451a03", fg: "#fbbf24" }],
-    },
-    {
-      icon: "\uD83D\uDCCC", color: "#22c55e",
-      title: "UMAP Dimensionality Reduction",
-      desc: "UMAP projects 768-dim vectors to 2D coordinates preserving local structure \u2014 similar rows land near each other on the scatter plot.",
-      tags: [{ text: "n_neighbors=15", bg: "#052e16", fg: "#4ade80" }, { text: "cosine", bg: "#052e16", fg: "#4ade80" }],
-    },
-    {
-      icon: "\uD83D\uDD2E", color: "#8b5cf6",
-      title: "KMeans Clustering",
-      desc: "Automatic cluster detection groups similar rows together, revealing hidden patterns in the data.",
-      tags: [{ text: "scikit-learn", bg: "#2e1065", fg: "#c084fc" }, { text: "KMeans", bg: "#2e1065", fg: "#c084fc" }],
-    },
-    {
-      icon: "\u2728", color: "#06b6d4",
-      title: "Interactive Scatter Plot",
-      desc: "D3.js + Canvas renders the 2D scatter with brush selection, quadtree hover, tooltips, legend highlighting, range slider, and modal views.",
-      tags: [{ text: "D3.js v7", bg: "#083344", fg: "#22d3ee" }, { text: "Canvas", bg: "#083344", fg: "#22d3ee" }],
-    },
+    { icon: "\uD83D\uDCC4", color: "#3b82f6", title: "Load CSV Data",
+      desc: "Provide any CSV file with your own data. The pipeline reads it and prepares rows for embedding.",
+      tags: [{ text: "pandas", bg: "#1e3a5f", fg: "#60a5fa" }, { text: "CSV", bg: "#1e3a5f", fg: "#60a5fa" }] },
+    { icon: "\uD83E\uDDE0", color: "#f59e0b", title: "Gemini Text Embeddings",
+      desc: "Selected columns are converted to text and embedded via Gemini into 768-dimensional semantic vectors.",
+      tags: [{ text: "Gemini API", bg: "#451a03", fg: "#fbbf24" }, { text: "768 dims", bg: "#451a03", fg: "#fbbf24" }] },
+    { icon: "\uD83D\uDCCC", color: "#22c55e", title: "UMAP Dimensionality Reduction",
+      desc: "UMAP projects high-dimensional vectors to 2D coordinates \u2014 similar rows land near each other.",
+      tags: [{ text: "UMAP", bg: "#052e16", fg: "#4ade80" }, { text: "2D projection", bg: "#052e16", fg: "#4ade80" }] },
+    { icon: "\uD83D\uDD2E", color: "#8b5cf6", title: "KMeans Clustering",
+      desc: "Automatic clustering groups similar rows together, revealing hidden patterns in the data.",
+      tags: [{ text: "scikit-learn", bg: "#2e1065", fg: "#c084fc" }, { text: "KMeans", bg: "#2e1065", fg: "#c084fc" }] },
+    { icon: "\u2728", color: "#06b6d4", title: "Interactive Scatter Plot",
+      desc: "D3.js + Canvas renders the 2D scatter with brush selection, hover tooltips, legend highlighting, timeline slider, and detail views.",
+      tags: [{ text: "D3.js v7", bg: "#083344", fg: "#22d3ee" }, { text: "Canvas", bg: "#083344", fg: "#22d3ee" }] },
   ];
 
   function buildArchCards() {
-    const cardsEl = document.getElementById("archCards");
-    cardsEl.innerHTML = ARCH_STEPS.map(s => `
+    document.getElementById("archCards").innerHTML = ARCH_STEPS.map(s => `
       <div class="arch-card">
         <div class="arch-card-icon" style="background:${s.color}22; color:${s.color}">${s.icon}</div>
         <div class="arch-card-body">
           <div class="arch-card-title">${s.title}</div>
           <div class="arch-card-desc">${s.desc}</div>
-          <div class="arch-card-tags">${s.tags.map(t =>
-            `<span class="arch-tag" style="background:${t.bg};color:${t.fg}">${t.text}</span>`
-          ).join("")}</div>
+          <div class="arch-card-tags">${s.tags.map(t => `<span class="arch-tag" style="background:${t.bg};color:${t.fg}">${t.text}</span>`).join("")}</div>
         </div>
       </div>
     `).join("");
@@ -1011,29 +829,20 @@
 
   // ── resize ────────────────────────────────────────────────
 
-  new ResizeObserver(() => {
-    resize();
-    positionPopup();
-  }).observe(container);
+  new ResizeObserver(() => { resize(); positionPopup(); }).observe(container);
 
-  // ── load a dataset ────────────────────────────────────────
+  // ── load dataset ──────────────────────────────────────────
 
   async function loadDataset(path) {
-    if (loadEl) { loadEl.classList.remove("error"); loadEl.querySelector(".loader-text").textContent = "Loading dataset"; loadEl.querySelector(".loader-sub").textContent = "Fetching visualization data\u2026"; loadEl.style.display = "flex"; }
+    if (loadEl) { loadEl.classList.remove("error"); loadEl.querySelector(".loader-text").textContent = "Loading generated dataset"; loadEl.querySelector(".loader-sub").textContent = "Fetching pipeline output\u2026"; loadEl.style.display = "flex"; }
     pausePlay();
-    st.brushed = null;
-    st.filters = {};
-    highlightedVal = null;
-    hoveredVal = null;
-    hoveredIdx = null;
+    st.brushed = null; st.filters = {};
+    highlightedVal = null; hoveredVal = null; hoveredIdx = null;
     popupPosition = null;
     closePopup();
 
     try {
-      const json = await fetch(path).then((r) => {
-        if (!r.ok) throw new Error(r.status);
-        return r.json();
-      });
+      const json = await fetch(path).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
 
       META = json.meta;
       colorMaps = META.colorMaps || {};
@@ -1049,50 +858,41 @@
       document.title = META.displayName || "CSV Data Explorer";
       document.querySelector("h1").innerHTML = `${META.displayName || "CSV Data"} <span class="accent">Explorer</span>`;
       document.getElementById("statCount").textContent = `${META.totalRows} rows`;
-      document.getElementById("statMode").textContent = META.embeddingMode === "text-gemini" ? "Gemini Embeddings" : "Numerical Embeddings";
       updateSelectedStatus(0);
 
       buildColorBySelect(META.colorColumns || [], META.defaultColor || "");
       buildFilterSelects(META.filterColumns || [], META.columns || {});
       buildLegend();
-      buildTicks();
-      syncSliderUI();
+
+      // Show/hide timeline bar
+      hasSlider = !!(META.hasTimeline && slS && slE && rfill && playBtn);
+      if (hasSlider && bottomBar) {
+        bottomBar.style.display = "";
+        buildTicks();
+        syncSliderUI();
+      } else if (bottomBar) {
+        bottomBar.style.display = "none";
+      }
+
       if (loadEl) loadEl.style.display = "none";
       resize();
     } catch (err) {
-      if (loadEl) { loadEl.classList.add("error"); loadEl.querySelector(".loader-text").textContent = `Failed to load ${path} \u2013 ${err.message}`; loadEl.style.display = "flex"; }
+      if (loadEl) { loadEl.classList.add("error"); loadEl.querySelector(".loader-text").textContent = `Failed to load \u2013 ${err.message}`; loadEl.querySelector(".loader-sub").textContent = "Re-run the build pipeline and refresh the page."; loadEl.style.display = "flex"; }
       console.error(err);
     }
   }
 
-  // ── dataset switcher ──────────────────────────────────────
-
-  datasetSel.addEventListener("change", () => {
-    const path = datasetSel.value;
-    if (path) loadDataset(path);
-  });
-
   // ── init ──────────────────────────────────────────────────
 
   try {
-    const datasets = await fetch("data/datasets.json").then((r) => {
-      if (!r.ok) throw new Error(r.status);
-      return r.json();
-    }).then((items) => items.filter((ds) => ds.name !== "moma"));
-
-    datasetSel.innerHTML = "";
-    datasets.forEach((ds) => {
-      const opt = document.createElement("option");
-      opt.value = ds.path;
-      opt.textContent = ds.displayName;
-      datasetSel.appendChild(opt);
-    });
-
+    const datasets = await fetch("data/datasets.json").then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
     if (datasets.length > 0) {
       loadDataset(datasets[0].path);
+    } else {
+      throw new Error("No datasets");
     }
   } catch (err) {
-    if (loadEl) { loadEl.classList.add("error"); loadEl.querySelector(".loader-text").textContent = `No datasets found \u2013 run: python scripts/build_dataset.py --all`; }
+    if (loadEl) { loadEl.classList.add("error"); loadEl.querySelector(".loader-text").textContent = "No generated dataset found"; loadEl.querySelector(".loader-sub").textContent = "Run: python build.py --csv your_data.csv, then refresh."; }
     console.error(err);
   }
 })();

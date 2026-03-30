@@ -1,44 +1,31 @@
-# ── Python ──────────────────────────────────────────────────
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
-dist/
-build/
-*.whl
+.venv/
 
-# ── Environment / secrets ──────────────────────────────────
+# Environment / secrets
 .env
 
-# ── Data (source CSVs & caches are large, not needed at runtime) ─
-data/*/source.csv
-data/*/embeddings_cache.json
-data/cache/
-data/source.csv
+# Data (generated outputs and local datasets)
+data/output/
+data/raw/
+data/datasets.json
 
-# ── Old / unused root-level data artifacts ─────────────────
-data/vis-data.json
-config.py
-
-# ── Build logs ─────────────────────────────────────────────
-*.log
-*.err.log
-build_all.log
-build_all.err.log
-
-# ── Editor / IDE ───────────────────────────────────────────
+# Editor / IDE
 .vscode/
 .idea/
 *.swp
-*.swo
 *~
 
-# ── OS junk ────────────────────────────────────────────────
+# OS
 Thumbs.db
 Desktop.ini
 .DS_Store
 
-# ── Misc files not part of the app ─────────────────────────
+# Misc
+*.log
 image.png
 prompts.txt
-claude_visualisation/
+pipeline.md
