@@ -1,16 +1,41 @@
-# CSV Data Explorer
+# CSV Visualisation
 
-Build a standalone `index.html` bundle from any local CSV or HTTP(S) CSV URL. The bundle contains the UI, styles, JavaScript, D3 runtime, and dataset payload in one file.
+Build a standalone HTML semantic map from any local CSV or HTTP(S) CSV URL.
+
+The generated file contains:
+
+- the UI
+- bundled JavaScript
+- bundled CSS
+- bundled D3
+- the embedded dataset payload
+
+No separate `assets/` or `data/` files are required at runtime.
+
+## What It Does
 
 The pipeline:
 
 1. reads a CSV with `pandas`
 2. turns selected text, image, and audio columns into embedding text with Gemini
-3. persists embeddings and text summaries in a local `.duckdb` cache
-4. exports the embedding cache to `.parquet`
-5. projects vectors to 2D with UMAP
+3. stores embeddings and text summaries in a local DuckDB cache
+4. exports the embedding cache to Parquet
+5. reduces vectors to 2D with UMAP
 6. clusters rows from embeddings or direct metadata columns
-7. writes a single self-contained HTML artifact
+7. writes a single standalone HTML artifact
+
+## Features
+
+- packaged CLI: `csv-viz`
+- runs locally with `uv run`
+- runs without installation via `uvx --from git+https://...`
+- local or remote CSV input
+- dry-run mode
+- text, image, and audio support
+- resumable embeddings with DuckDB
+- Parquet export
+- cluster naming with Gemini
+- popup styles: `auto`, `grid`, `list`, `table`
 
 ## Requirements
 
@@ -24,17 +49,23 @@ Example `.env`:
 GEMINI_API_KEY=your_key_here
 ```
 
-A `.env` containing just the raw Gemini key also works.
+A `.env` containing just the raw Gemini key also works. `GOOGLE_API_KEY` is also accepted and mapped to `GEMINI_API_KEY`.
 
-## Local Workflow With `uv`
+## Quick Start
 
-Install dependencies and lock them:
+Install and lock dependencies:
 
 ```bash
 uv lock
 ```
 
-Build a standalone bundle:
+Show CLI help:
+
+```bash
+uv run csv-viz --help
+```
+
+Build a standalone bundle from a local CSV:
 
 ```bash
 uv run csv-viz music.csv \
@@ -45,20 +76,7 @@ uv run csv-viz music.csv \
   --timeline-column year
 ```
 
-Multimodal example:
-
-```bash
-uv run csv-viz songs.csv \
-  --embedding-columns title,artist \
-  --image-columns cover_url \
-  --audio-columns preview_url \
-  --audio-metadata-columns genre,album \
-  --cluster-columns embeddings,genre \
-  --cluster-names \
-  --popup-style grid
-```
-
-Validate the plan without embedding:
+Validate the run without calling Gemini:
 
 ```bash
 uv run csv-viz music.csv \
@@ -69,25 +87,46 @@ uv run csv-viz music.csv \
   --dry-run
 ```
 
-Defaults:
+Open the generated HTML directly in a browser.
 
-- output HTML: `dist/index.html`
-- DuckDB cache: `.csv-viz/embeddings.duckdb`
-- Parquet export: `.csv-viz/embeddings.parquet`
-
-Open the generated `dist/index.html` directly in a browser.
-
-## `uvx` With A GitHub URL
-
-Once the repo is pushed, the tool can run without installation:
+## Multimodal Example
 
 ```bash
-uvx --from git+https://github.com/<owner>/<repo> csv-viz music.csv \
+uv run csv-viz books.csv \
+  --embedding-columns title,authors \
+  --image-columns image_url \
+  --color-columns language_code \
+  --filter-columns language_code \
+  --timeline-column year \
+  --cluster-columns embeddings,language_code \
+  --cluster-names \
+  --popup-style grid
+```
+
+## Remote CSV Example
+
+```bash
+uv run csv-viz https://raw.githubusercontent.com/sanand0/embedumap/main/samples/blog-text.csv \
+  --embedding-columns text \
+  --color-columns primary_category,year \
+  --filter-columns primary_category,year \
+  --timeline-column year \
+  --cluster-columns embeddings,primary_category \
+  --cluster-names \
+  --popup-style list
+```
+
+## `uvx` Usage
+
+Run directly from GitHub without installing the project:
+
+```bash
+uvx --from git+https://github.com/Ritesh17rb/csv-visualisation csv-viz music.csv \
   --embedding-columns title,artist,genre \
   --color-columns genre
 ```
 
-Because the tool may run from an ephemeral install, all generated artifacts are written relative to the caller's working directory, not the package directory.
+Generated artifacts are written relative to the caller's working directory, not the package directory.
 
 ## Important Flags
 
@@ -115,12 +154,46 @@ Because the tool may run from an ephemeral install, all generated artifacts are 
 | `--no-export-parquet` | Skip the Parquet export |
 | `--dry-run` | Validate inputs without embedding |
 
-## Resume Behavior
+## Output And Cache
 
-Embeddings are keyed by the row text hash plus model metadata and stored in DuckDB. Media summaries and cluster names are cached there too. On rerun:
+Defaults:
+
+- output HTML: `dist/index.html`
+- DuckDB cache: `.csv-viz/embeddings.duckdb`
+- Parquet export: `.csv-viz/embeddings.parquet`
+
+Embeddings are keyed by text hash plus model metadata and stored in DuckDB. Media summaries and cluster names are cached there too.
+
+On rerun:
 
 - existing embeddings are reused
 - existing image/audio summaries are reused
 - existing cluster names are reused for the same cluster payload
 - only missing rows are sent to Gemini
-- the cache can be inspected via the `.duckdb` file or consumed from the exported `.parquet`
+
+## Testing
+
+Run unit tests:
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
+Basic CLI validation:
+
+```bash
+uv run csv-viz --help
+```
+
+## Notes From Real Runs
+
+Verified on real public datasets:
+
+- Yelp reviews text dataset
+- Goodreads/Goodbooks image-cover sample
+- 500-row text run completed successfully
+
+Current practical limit:
+
+- large text datasets are workable
+- large multimodal datasets can hit Gemini `generateContent` rate limits, especially when image/audio summarization and cluster naming are both enabled
