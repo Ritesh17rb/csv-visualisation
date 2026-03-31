@@ -124,7 +124,3 @@ Embeddings are keyed by the row text hash plus model metadata and stored in Duck
 - existing cluster names are reused for the same cluster payload
 - only missing rows are sent to Gemini
 - the cache can be inspected via the `.duckdb` file or consumed from the exported `.parquet`
-
-## Legacy Wrapper
-
-`python build.py ...` still works as a thin wrapper around the packaged CLI, but the primary workflow is `uv run csv-viz ...` or `uvx --from git+https://...`.
