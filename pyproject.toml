@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "csv-visualisation"
+version = "0.1.0"
+description = "Generate a standalone HTML CSV visualisation with Gemini embeddings."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "duckdb>=1.4.1",
+  "numpy>=1.26.0",
+  "pandas>=2.1.0",
+  "requests>=2.31.0",
+  "scikit-learn>=1.6.0",
+  "umap-learn>=0.5.11",
+]
+
+[project.scripts]
+csv-viz = "csv_visualisation.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+csv_visualisation = ["static/*.css", "static/*.js", "templates/*.html", "vendor/*.js"]

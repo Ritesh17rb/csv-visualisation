@@ -4,6 +4,10 @@ __pycache__/
 *.pyo
 *.egg-info/
 .venv/
+dist/
+.csv-viz/
+*.duckdb
+*.parquet
 
 # Environment / secrets
 .env
@@ -29,3 +33,4 @@ Desktop.ini
 image.png
 prompts.txt
 pipeline.md
+tmp-smoke/

@@ -105,8 +105,31 @@
 
   function formatValueLabel(col, value) {
     if (value == null || value === "") return "Missing";
-    if (col === "cluster") return `Cluster ${value}`;
+    if (col === "cluster") return String(value);
     return String(value);
+  }
+
+  function supportsMediaPopup() {
+    return !!(META.hasImages || META.hasAudio);
+  }
+
+  function normalizePopupView(view) {
+    return ["grid", "list", "table"].includes(view) ? view : "auto";
+  }
+
+  function defaultPopupView() {
+    const preferred = normalizePopupView(META.popupStyle || "auto");
+    if (preferred === "auto") return supportsMediaPopup() ? "grid" : "list";
+    if (preferred === "grid" && !supportsMediaPopup()) return "list";
+    return preferred;
+  }
+
+  function syncPopupViewButtons() {
+    document.querySelectorAll(".view-btn").forEach(btn => {
+      const enabled = btn.dataset.view !== "grid" || supportsMediaPopup();
+      btn.style.display = enabled ? "" : "none";
+      btn.classList.toggle("active", btn.dataset.view === popupView);
+    });
   }
 
   function getPointValues(d, col) {
@@ -192,7 +215,7 @@
     if (col === "cluster") {
       const note = document.createElement("div");
       note.className = "legend-note";
-      note.textContent = "Cluster labels are automatic KMeans group IDs, not rankings.";
+      note.textContent = "Cluster labels come from clustering or direct metadata groups, and are not rankings.";
       el.appendChild(note);
     }
     updateLegendStyles();
@@ -232,6 +255,7 @@
     const hasBrush = st.brushed !== null;
     const brushedSet = hasBrush ? new Set(st.brushed.map(d => d._i)) : null;
     const col = st.colorBy;
+    const baseOpacity = Number.isFinite(META.opacity) ? Math.max(0.05, Math.min(1, META.opacity)) : 0.85;
 
     for (let pass = 0; pass < 2; pass++) {
       for (const d of DATA) {
@@ -245,15 +269,15 @@
         if (activeVal) {
           alpha = pointHasValue(d, col, activeVal) ? 1.0 : 0.12;
         } else if (!inRange && (!hasBrush || !inBrush)) {
-          alpha = 0.05;
+          alpha = Math.max(0.03, baseOpacity * 0.06);
         } else if (!inRange) {
-          alpha = 0.1;
+          alpha = Math.max(0.06, baseOpacity * 0.12);
         } else if (hasBrush && !inBrush) {
-          alpha = 0.08;
+          alpha = Math.max(0.05, baseOpacity * 0.1);
         } else if (isHovered) {
           alpha = 1.0;
         } else {
-          alpha = 0.85;
+          alpha = baseOpacity;
         }
 
         const bright = alpha > 0.5;
@@ -538,6 +562,7 @@
     popupTitle.textContent = `${pts.length} row${pts.length === 1 ? "" : "s"} selected`;
     popup.classList.add("visible");
     popup.classList.remove("hidden");
+    popupBackdrop.classList.add("visible");
     tip.style.display = "none";
 
     const col = st.colorBy;
@@ -576,12 +601,14 @@
       return popupSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
     });
     if (popupView === "grid") renderGridView(sorted);
+    else if (popupView === "list") renderListView(sorted);
     else renderTableView(sorted);
   }
 
   function renderGridView(sorted) {
     const tipCols = META.tooltipColumns || [];
     const hasImg = META.hasImages;
+    const hasAudio = META.hasAudio;
     popupScroll.innerHTML = "";
     const grid = document.createElement("div");
     grid.className = "popup-grid";
@@ -590,15 +617,50 @@
       const item = document.createElement("div");
       item.className = "popup-grid-item";
       let imgHtml = hasImg && d.image ? `<img src="${d.image}" alt="${d.label}" loading="lazy">` : "";
+      let audioHtml = hasAudio && d.audio ? `<div style="padding:8px 8px 0"><audio controls preload="metadata" src="${d.audio}" style="width:100%"></audio></div>` : "";
       const color = getColor(d);
       const details = tipCols.slice(0, 3).map(c => {
         const val = d[c]; return val != null ? `${c}: ${fmt(val)}` : "";
       }).filter(Boolean).join(" · ");
-      item.innerHTML = `${imgHtml}<div class="popup-grid-label"><div class="popup-grid-pub" style="color:${color}">${d.label}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${details}</div></div>`;
+      item.innerHTML = `${imgHtml}${audioHtml}<div class="popup-grid-label"><div class="popup-grid-pub" style="color:${color}">${d.label}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${details}</div></div>`;
       if (hasImg && d.image) item.addEventListener("click", () => openLightbox(d, sorted));
       grid.appendChild(item);
     });
     popupScroll.appendChild(grid);
+  }
+
+  function renderListView(sorted) {
+    const tipCols = META.tooltipColumns || [];
+    const hasImg = META.hasImages;
+    const hasAudio = META.hasAudio;
+    popupScroll.innerHTML = "";
+    const list = document.createElement("div");
+    list.className = "popup-list";
+
+    sorted.forEach(d => {
+      const item = document.createElement("div");
+      item.className = "popup-list-item";
+      const color = getColor(d);
+      const details = tipCols.slice(0, 4).map(c => {
+        const val = d[c];
+        return val != null && val !== "" ? `<span class="popup-list-pill"><b>${getColumnLabel(c)}:</b> ${fmt(val)}</span>` : "";
+      }).filter(Boolean).join("");
+      const media = [
+        hasImg && d.image ? `<img class="popup-list-thumb" src="${d.image}" alt="${d.label}" loading="lazy">` : "",
+        hasAudio && d.audio ? `<audio controls preload="metadata" src="${d.audio}" style="width:100%"></audio>` : "",
+      ].filter(Boolean).join("");
+      item.innerHTML = `
+        <div class="popup-list-media">${media}</div>
+        <div class="popup-list-body">
+          <div class="popup-list-title" style="color:${color}">${d.label}</div>
+          <div class="popup-list-sub">Cluster: ${formatValueLabel("cluster", d.cluster)}</div>
+          <div class="popup-list-meta">${details}</div>
+        </div>
+      `;
+      if (hasImg && d.image) item.addEventListener("click", () => openLightbox(d, sorted));
+      list.appendChild(item);
+    });
+    popupScroll.appendChild(list);
   }
 
   function renderTableView(sorted) {
@@ -622,7 +684,7 @@
       const cells = allCols.map(col => {
         if (col === "image") return d.image ? `<td><img class="pop-thumb" src="${d.image}" alt="" loading="lazy"></td>` : `<td></td>`;
         if (col === "cluster") {
-          const cc = CLUSTER_PAL[d.cluster % CLUSTER_PAL.length];
+          const cc = CLUSTER_PAL[(Number.isFinite(d.clusterId) ? d.clusterId : 0) % CLUSTER_PAL.length];
           return `<td><span class="clust-sq" style="background:${cc}"></span> ${formatValueLabel("cluster", d.cluster)}</td>`;
         }
         const val = d[col];
@@ -691,7 +753,7 @@
   document.querySelectorAll(".view-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       popupView = btn.dataset.view;
-      document.querySelectorAll(".view-btn").forEach(b => b.classList.toggle("active", b === btn));
+      syncPopupViewButtons();
       if (st.brushed) renderPopupContent(st.brushed);
     });
   });
@@ -743,14 +805,15 @@
       const val = found[col];
       return `<div class="tip-row"><b>${col}:</b> ${val != null ? fmt(val) : "\u2014"}</div>`;
     }).join("");
+    const audio = META.hasAudio && found.audio ? `<div style="margin:8px 0 4px"><audio controls preload="metadata" src="${found.audio}" style="width:100%"></audio></div>` : "";
 
     const tipImgEl = document.getElementById("tipImg");
     if (META.hasImages && found.image) { tipImgEl.src = found.image; tipImgEl.style.display = "block"; }
     else tipImgEl.style.display = "none";
 
     document.getElementById("tipTitle").textContent = found.label;
-    document.getElementById("tipCluster").textContent = `Cluster group: ${found.cluster}`;
-    document.getElementById("tipRows").innerHTML = rows;
+    document.getElementById("tipCluster").textContent = `Cluster group: ${formatValueLabel("cluster", found.cluster)}`;
+    document.getElementById("tipRows").innerHTML = `${audio}${rows}`;
 
     tip.style.display = "block";
     let tx = e.clientX + 16, ty = e.clientY - 10;
@@ -833,8 +896,8 @@
 
   // ── load dataset ──────────────────────────────────────────
 
-  async function loadDataset(path) {
-    if (loadEl) { loadEl.classList.remove("error"); loadEl.querySelector(".loader-text").textContent = "Loading generated dataset"; loadEl.querySelector(".loader-sub").textContent = "Fetching pipeline output\u2026"; loadEl.style.display = "flex"; }
+  function loadDataset(json) {
+    if (loadEl) { loadEl.classList.remove("error"); loadEl.querySelector(".loader-text").textContent = "Loading embedded dataset"; loadEl.querySelector(".loader-sub").textContent = "Reading bundled data\u2026"; loadEl.style.display = "flex"; }
     pausePlay();
     st.brushed = null; st.filters = {};
     highlightedVal = null; hoveredVal = null; hoveredIdx = null;
@@ -842,9 +905,9 @@
     closePopup();
 
     try {
-      const json = await fetch(path).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
-
       META = json.meta;
+      popupView = defaultPopupView();
+      syncPopupViewButtons();
       colorMaps = META.colorMaps || {};
       X_DOM = json.domains.x;
       Y_DOM = json.domains.y;
@@ -877,7 +940,7 @@
       if (loadEl) loadEl.style.display = "none";
       resize();
     } catch (err) {
-      if (loadEl) { loadEl.classList.add("error"); loadEl.querySelector(".loader-text").textContent = `Failed to load \u2013 ${err.message}`; loadEl.querySelector(".loader-sub").textContent = "Re-run the build pipeline and refresh the page."; loadEl.style.display = "flex"; }
+      if (loadEl) { loadEl.classList.add("error"); loadEl.querySelector(".loader-text").textContent = `Failed to load \u2013 ${err.message}`; loadEl.querySelector(".loader-sub").textContent = "Rebuild the standalone HTML bundle."; loadEl.style.display = "flex"; }
       console.error(err);
     }
   }
@@ -885,14 +948,11 @@
   // ── init ──────────────────────────────────────────────────
 
   try {
-    const datasets = await fetch("data/datasets.json").then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
-    if (datasets.length > 0) {
-      loadDataset(datasets[0].path);
-    } else {
-      throw new Error("No datasets");
-    }
+    const datasetEl = document.getElementById("app-data");
+    if (!datasetEl || !datasetEl.textContent.trim()) throw new Error("Missing embedded dataset");
+    loadDataset(JSON.parse(datasetEl.textContent));
   } catch (err) {
-    if (loadEl) { loadEl.classList.add("error"); loadEl.querySelector(".loader-text").textContent = "No generated dataset found"; loadEl.querySelector(".loader-sub").textContent = "Run: python build.py --csv your_data.csv, then refresh."; }
+    if (loadEl) { loadEl.classList.add("error"); loadEl.querySelector(".loader-text").textContent = "No embedded dataset found"; loadEl.querySelector(".loader-sub").textContent = "Run csv-viz build to generate a standalone HTML bundle."; }
     console.error(err);
   }
 })();

@@ -3,8 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CSV Data Explorer</title>
-  <link rel="stylesheet" href="assets/app.css">
+  <title>__TITLE__</title>
+  <style>
+__APP_CSS__
+  </style>
 </head>
 <body>
 
@@ -26,10 +28,8 @@
   </div>
 </header>
 
-<!-- Architecture modal backdrop -->
 <div class="arch-backdrop" id="archBackdrop"></div>
 
-<!-- Architecture modal -->
 <div class="arch-modal" id="archModal">
   <div class="arch-head">
     <span class="arch-title">How It <span class="accent">Works</span></span>
@@ -64,13 +64,12 @@
         </svg>
         <div class="loader-orb"></div>
       </div>
-      <div class="loader-text">Waiting for generated dataset</div>
-      <div class="loader-sub">Run the build pipeline, then refresh this page.</div>
+      <div class="loader-text">Loading embedded dataset</div>
+      <div class="loader-sub">Preparing the standalone bundle...</div>
     </div>
   </div>
 </div>
 
-<!-- Timeline bar (shown only when dataset has timeline data) -->
 <div id="bottom" style="display:none">
   <div class="date-row">
     <span class="date-lbl" id="lbl-start"></span>
@@ -87,7 +86,6 @@
   <div id="year-ticks"></div>
 </div>
 
-<!-- Tooltip -->
 <div id="tip">
   <img id="tipImg" class="tip-img" src="" alt="" style="display:none">
   <div class="tip-title" id="tipTitle"></div>
@@ -95,10 +93,8 @@
   <div id="tipRows"></div>
 </div>
 
-<!-- Popup backdrop -->
 <div class="popup-backdrop" id="popupBackdrop"></div>
 
-<!-- Popup modal -->
 <div id="popup" class="hidden">
   <div class="pop-head">
     <span class="pop-title" id="pop-title">Selected rows</span>
@@ -106,6 +102,7 @@
   </div>
   <div class="popup-toolbar">
     <button class="view-btn active" data-view="grid">Grid</button>
+    <button class="view-btn" data-view="list">List</button>
     <button class="view-btn" data-view="table">Table</button>
     <div class="popup-badges" id="popupBadges"></div>
   </div>
@@ -117,14 +114,17 @@
   </div>
 </div>
 
-<!-- Lightbox -->
 <div class="lightbox" id="lightbox">
   <img id="lightboxImg" src="" alt="">
   <div class="lightbox-label" id="lightboxLabel"></div>
 </div>
 
-
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-<script src="assets/app.js"></script>
+<script id="app-data" type="application/json">__APP_DATA__</script>
+<script>
+__D3_JS__
+</script>
+<script>
+__APP_JS__
+</script>
 </body>
 </html>
